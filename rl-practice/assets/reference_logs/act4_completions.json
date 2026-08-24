@@ -1,0 +1,32 @@
+{
+  "0": [
+    "<think>73 times 9 = 657 </think>",
+    "<think>multiply 73 and 9 </think> <answer> 657 </answer>",
+    "<think> 73 times 9 </think> \n<answer> 657 </answer>"
+  ],
+  "25": [
+    "<think> multiplication </think><answer> 52 </answer>",
+    "<think> multiplication </think><answer> 520 </answer>",
+    "<think> multiplication </think><answer> 520 </answer>"
+  ],
+  "50": [
+    "<think> multiplication </think><answer> 583 </answer>",
+    "<think> multiplication </think><answer> 583 </answer>",
+    "<think> multiplication </think><answer> 583 </answer>"
+  ],
+  "75": [
+    "<think> multiplication </think><answer> 315 </answer>",
+    "<think> multiplication </think><answer> 315 </answer>",
+    "<think> multiplication </think><answer> 315 </answer>"
+  ],
+  "100": [
+    "<think> Your reasoning </think>\n<answer> 135 </answer>",
+    "<think> multiplication </think>\n<answer> 135 </answer>",
+    "<think> Calculate </think><answer> 135 </answer>"
+  ],
+  "125": [
+    "<think>92*2=184</think> <answer>184</answer>",
+    "<think>92*2=184</think><answer>184</answer>",
+    "<think> 92 \u00d7 2 = 184 </think> <answer> 184 </answer>"
+  ]
+}

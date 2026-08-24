@@ -1,0 +1,17 @@
+{
+  "tag": "act1",
+  "beta": 0.0,
+  "steps": 150,
+  "seconds_per_step": 7.0272994836171465,
+  "budget_steps": 128,
+  "wall_seconds": 878.6659510135651,
+  "eval_seconds": 71.31385326385498,
+  "peak_allocated_gb": 7.057117938995361,
+  "peak_reserved_gb": 9.12109375,
+  "baseline_accuracy": 0.625,
+  "final_accuracy": 0.0,
+  "baseline_perplexity": 27.595197677612305,
+  "final_perplexity": 31.42166519165039,
+  "adapter": "/home/mbunino2/code/26-ADVANCED-ML/rl-practice/assets/reference_adapters/act1",
+  "log_csv": "/home/mbunino2/code/26-ADVANCED-ML/rl-practice/assets/reference_logs/act1.csv"
+}

@@ -1,0 +1,70 @@
+# RL practice session - exact tested dependency set.
+#
+#   Base image : registry.cern.ch/ngt/pytorch:2.3.1
+#   Python     : 3.11
+#   torch      : 2.3.1+cu121  (from the image, NOT installed here)
+#   GPU        : NVIDIA T4, compute capability (7, 5), 15.6 GB
+#
+# Install with the constraints file, always:
+#
+#     pip install -c constraints.txt -r requirements.txt
+#     python tools/check_env.py          # asserts torch did not move
+#
+# Every version below was resolved and tested together on the target hardware. The five
+# direct dependencies are the set the implementation spec proposed; they needed no
+# adjustment - pip resolved them without touching torch, torchvision, torchaudio or
+# numpy. The transitive pins are recorded because "it worked when I ran it" is not a
+# dependency specification.
+#
+# Deliberately ABSENT, and this is not an oversight:
+#
+#   vllm          - would force a torch upgrade. GRPO runs with use_vllm=False.
+#   flash-attn    - no sm75 support. The model is loaded with attn_implementation="sdpa".
+#   bitsandbytes  - not needed; a 0.5B model in fp32 is ~2 GB and fits comfortably.
+#   torch, numpy  - supplied by the base image, and pinned in constraints.txt so that
+#                   nothing here can quietly replace them.
+
+# --- direct dependencies -----------------------------------------------------------
+transformers==4.49.0
+trl==0.15.2
+peft==0.14.0
+accelerate==1.4.0
+datasets==3.3.2
+
+# --- notebook 1 --------------------------------------------------------------------
+gymnasium==0.29.1
+
+# --- plotting and tables (matplotlib pinned to the version already in the image) ----
+matplotlib==3.8.4
+pandas==2.2.3
+
+# --- notebook execution and tests --------------------------------------------------
+pytest==8.3.4
+nbformat==5.10.4
+nbconvert==7.16.6
+nbclient==0.11.0
+ipykernel==6.29.5
+jupyter_client==8.6.3
+
+# --- transitive pins, recorded from the tested environment -------------------------
+# huggingface_hub and tokenizers are the two that actually break things when they drift:
+# tokenizers is a compiled extension matched to a transformers range, and hub API
+# changes have repeatedly broken from_pretrained across minor versions.
+huggingface_hub==0.36.2
+tokenizers==0.21.4
+safetensors==0.8.0
+fsspec==2024.12.0
+pyarrow==25.0.1
+dill==0.3.8
+multiprocess==0.70.16
+xxhash==4.0.1
+regex==2026.7.19
+requests==2.34.2
+tqdm==4.70.0
+PyYAML==6.0.3
+packaging==26.3
+psutil==7.2.2
+filelock==3.32.3
+rich==15.0.0
+Farama-Notifications==0.0.6
+cloudpickle==3.1.2

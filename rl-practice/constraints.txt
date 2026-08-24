@@ -1,0 +1,22 @@
+# Hard floor and ceiling on everything the base image already provides.
+#
+# Use it as:   pip install -c constraints.txt -r requirements.txt
+#
+# The point is not to install these - the image already has them - but to make pip
+# *fail loudly* if some dependency in requirements.txt wants a different torch or numpy,
+# instead of silently replacing the CUDA build the image was tested with. A silent torch
+# upgrade is the single most likely way this session breaks on the day:
+#
+#   * the replacement may be the CPU wheel, so torch.cuda.is_available() goes False;
+#   * or a cu12x build compiled without sm75 kernels, so nothing runs on a T4;
+#   * or a version whose ABI does not match the CUDA runtime in the image.
+#
+# All three fail late, loudly, and confusingly. This file makes them fail early instead.
+torch==2.3.1
+torchvision==0.18.1
+torchaudio==2.3.1
+
+# The base image already sets PIP_CONSTRAINT=/etc/pip-constraints.txt containing exactly
+# this pin. Repeated here so the constraint survives outside the image too. torch 2.3.1
+# predates the numpy 2 ABI break and will segfault against numpy>=2.
+numpy==1.24.4

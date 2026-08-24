@@ -1,0 +1,14 @@
+# Scratch produced by running the notebooks. The shipped reference artefacts live in
+# assets/ and are produced by tools/prestage.py; anything a live run writes is disposable.
+notebooks/runs/
+notebooks/.ipynb_checkpoints/
+assets/_trainer_output/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# The base model is a ~1 GB download, not a source artefact. tools/prestage.py --model
+# fetches it, and the loader falls back to the hub if it is absent. Everything else in
+# assets/ is small and IS committed, because it is the insurance policy that lets a
+# student continue when their own run diverges.
+assets/base_model/
