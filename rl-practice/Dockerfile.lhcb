@@ -118,6 +118,24 @@ PY
 # The xdt environment must still work - this image serves the LHCb challenge too.
 RUN python -c "import gymnasium, xdt.dt.envs; print('xdt environment intact:', gymnasium.__version__)"
 
+# Ignore ~/.local/lib/python*/site-packages entirely.
+#
+# On Kubeflow the home directory is a persistent volume - at CERN, EOS - and it outlives
+# any one notebook server. A `pip install --user` done once, against some other image,
+# leaves packages there that then take priority over this image's own on every future
+# server. Observed: a numpy left in EOS home by an earlier install shadowed the image's
+# numpy and broke `import matplotlib` with a circular-import error that names neither the
+# stale directory nor the real cause.
+#
+# This image is self-contained, so user site-packages can only do harm. Verified: with a
+# stale numpy in ~/.local, imports fail; with this set, numpy resolves to /opt/conda and
+# matplotlib imports cleanly.
+ENV PYTHONNOUSERSITE=1
+
+# Matplotlib wants a writable config directory and warns loudly on every import when HOME
+# is read-only or unwritable.
+ENV MPLCONFIGDIR=/tmp/matplotlib
+
 LABEL org.opencontainers.image.description="CERN STEAM Academy 2026 - RL practice session \
 with assets embedded, on the LHCb challenge base. torch 2.3.1+cu121 for NVIDIA T4 (sm75)."
 
