@@ -1,0 +1,19 @@
+# Scratch produced by running the notebooks. The shipped reference artefacts live in
+# assets/ and are produced by tools/prestage.py; anything a live run writes is disposable.
+notebooks/runs/
+notebooks/.ipynb_checkpoints/
+assets/_trainer_output/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Nothing under assets/ belongs in git. The base model is a ~1 GB download and the
+# reference adapters are 17 MB each of binary weights - none of it is source, and all of
+# it bloats every clone forever. It is distributed as a separate assets.tar.gz; students
+# unpack it wherever they like and point SHARED_DIR at it (see SETUP.md).
+assets/
+
+# Quiz questions with answers. Not for the students' checkout.
+exam-questions.md
+
+*.tar.gz
