@@ -1,5 +1,7 @@
 # Reinforcement learning practice session
 
+**Conveners / speakers:** Matteo Bunino (CERN)
+
 CERN STEAM Academy. Two Jupyter notebooks, a support package, and the tooling needed to run
 them in front of a room without depending on the network, the hardware, or the day going
 well.

@@ -132,3 +132,43 @@ def test_nothing_in_this_module_writes(fake_layout, monkeypatch):
     paths.asset("does_not_exist", must_exist=False)
     after = {str(p) for p in checkout.rglob("*")} | {str(p) for p in shared.rglob("*")}
     assert before == after
+
+
+# --- the tarball is unpacked by hand, so the layout is the thing that goes wrong --------
+
+
+def test_shared_dir_pointed_one_level_too_high_says_so(tmp_path):
+    """Thirty people unpack assets.tar.gz wherever they like. Some will point SHARED_DIR
+    at the directory they unpacked *into* rather than the one the archive created, and
+    everything downstream would still 'work' until a training cell cannot find weights."""
+    unpacked_into = tmp_path / "downloads"
+    (unpacked_into / "rl-practice-assets" / "base_model").mkdir(parents=True)
+    (unpacked_into / "rl-practice-assets" / "base_model" / paths.MODEL_SENTINEL).write_text("{}")
+
+    with pytest.raises(FileNotFoundError) as excinfo:
+        paths.use_shared(str(unpacked_into))
+    message = str(excinfo.value)
+    assert "does not contain base_model/" in message
+    assert "Did you mean" in message
+    assert "rl-practice-assets" in message
+
+
+def test_shared_dir_with_no_base_model_anywhere_explains_the_rule(tmp_path):
+    empty = tmp_path / "somewhere"
+    (empty / "notes").mkdir(parents=True)
+    with pytest.raises(FileNotFoundError) as excinfo:
+        paths.use_shared(str(empty))
+    message = str(excinfo.value)
+    assert "directly contains" in message
+    assert "notes" in message
+
+
+def test_a_correctly_pointed_shared_dir_is_accepted(tmp_path, monkeypatch):
+    good = tmp_path / "rl-practice-assets"
+    (good / "base_model").mkdir(parents=True)
+    (good / "base_model" / paths.MODEL_SENTINEL).write_text("{}")
+    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path / "checkout"))
+    (tmp_path / "checkout" / "assets").mkdir(parents=True)
+    assert paths.use_shared(str(good), verbose=False) == str(good)
+    assert paths.model_dir() == str(good / "base_model")
+    paths.use_shared(None, verbose=False)

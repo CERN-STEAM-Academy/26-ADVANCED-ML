@@ -78,21 +78,22 @@ cells.append(md(r"""
 
 One cell to check, and usually nothing to change.
 
-The base model is about a gigabyte of weights. It is deliberately **not** in the git
-repository, because weights are not source and because thirty people downloading the same
-gigabyte at the same moment is not a plan. So it comes from one of three places, in this
-order of preference:
+None of the large files are in the git repository - weights are not source, and thirty
+people downloading the same gigabyte at the same moment is not a plan. They come in a
+separate `assets.tar.gz` (about 1 GB) which you download once and unpack anywhere you like.
 
-1. a **shared read-only directory** - at CERN, an `/eos` path - which is what an instructor
-   will have set up for a class;
-2. `assets/base_model` inside your own checkout, put there by `tools/prestage.py --model`;
-3. the HuggingFace hub, downloaded on demand, which needs network access.
+**Set `SHARED_DIR` below to wherever you unpacked it.** That directory should contain
+`base_model/`, and usually `reference_adapters/`, `reference_logs/`, `snapshots/` and
+`dqn/` as well.
 
-Set `SHARED_DIR` below if you were given a path. You do not need to set any environment
-variables or restart the kernel; `paths.use_shared` handles that, and it exports the
-setting so anything this notebook shells out to inherits it. It also checks the path
-immediately - discovering that an EOS mount is not there is much better now than forty
-minutes into a training run.
+You do not need to set an environment variable or restart the kernel. `paths.use_shared`
+handles that, exports the setting so anything this notebook shells out to inherits it, and
+checks the path immediately - finding out that it is wrong is much better now than forty
+minutes into a training run. It prints where every artefact was resolved from, so read the
+output.
+
+If you leave it as `None`, the notebook looks in `assets/` inside the repository, and falls
+back to downloading the model from the HuggingFace hub, which needs network access.
 """))
 
 cells.append(code(r'''
@@ -103,9 +104,10 @@ import sys
 sys.path.insert(0, os.path.abspath(".."))
 from rlpractice import paths
 
-# None  -> use this repository's own assets/, downloading the model if it is not there.
-# a str -> use a shared read-only copy, laid out like assets/, e.g.
-#          "/eos/project/s/steam/rl-practice"   (so the weights are in .../rl-practice/base_model)
+# Where you unpacked assets.tar.gz. It must contain base_model/.
+#   "~/assets"                      after unpacking in your home directory
+#   "/eos/project/.../rl-practice"  a shared copy an instructor set up
+#   None                            use assets/ inside this repository instead
 SHARED_DIR = None
 
 paths.use_shared(SHARED_DIR)
@@ -153,8 +155,6 @@ TRAIN_FROM_SCRATCH = True
 # ---------------------------------------------------------------------------------
 USE_REFERENCE_SOLUTIONS = os.environ.get("RLPRACTICE_REFERENCE", "0") == "1"
 
-ASSETS = os.path.abspath("../assets")
-LOGS = os.path.join(ASSETS, "reference_logs")
 RUNS = os.path.abspath("runs")
 # This notebook's own measurements go under runs/, not into assets/. assets/ holds the
 # pre-staged reference artefacts, and those must keep matching the reference adapters
@@ -714,10 +714,11 @@ if TRAIN_FROM_SCRATCH:
 else:
     from peft import PeftModel
 
-    act1_log = os.path.join(LOGS, "act1.csv")
-    adapter = os.path.join(ASSETS, "reference_adapters", "act1")
+    logs = paths.require("reference_logs", "load the pre-staged Act 1 metrics")
+    act1_log = os.path.join(logs, "act1.csv")
+    adapter = paths.require("reference_adapters/act1", "load the pre-staged Act 1 adapter")
     model_act1 = PeftModel.from_pretrained(model, adapter)
-    with open(os.path.join(LOGS, "act1_completions.json")) as handle:
+    with open(os.path.join(logs, "act1_completions.json")) as handle:
         act1_completions = {int(k): v for k, v in json.load(handle).items()}
     print(f"loaded the pre-staged Act 1 adapter from {adapter}")
     print(f"loaded the pre-staged Act 1 log from {act1_log}")
@@ -1091,8 +1092,10 @@ if TRAIN_FROM_SCRATCH:
 else:
     from peft import PeftModel
 
-    act4_log = os.path.join(LOGS, "act4.csv")
-    adapter = os.path.join(ASSETS, "reference_adapters", "act4")
+    act4_log = os.path.join(
+        paths.require("reference_logs", "load the pre-staged Act 4 metrics"), "act4.csv"
+    )
+    adapter = paths.require("reference_adapters/act4", "load the pre-staged Act 4 adapter")
     model, tokenizer = grpo.load_model_and_tokenizer(verbose=False)
     model_act4 = PeftModel.from_pretrained(model, adapter)
     print(f"loaded the pre-staged Act 4 adapter from {adapter}")

@@ -101,9 +101,31 @@ def use_shared(path: str | None, verbose: bool = True) -> str | None:
     if not os.path.isdir(path):
         raise FileNotFoundError(
             f"{path!r} is not a readable directory.\n"
-            "If it is an EOS path, check that the mount is up (try `ls /eos`) and that "
-            "your Kerberos token is valid. If you meant to use the copy inside the "
-            "repository, set SHARED_DIR = None."
+            "Check the path. If it is an EOS path, check that the mount is up (try "
+            "`ls /eos`) and that your Kerberos token is valid. If you meant to use the "
+            "copy inside the repository, set SHARED_DIR = None."
+        )
+
+    # Point one directory too high or too low and everything below still "works", right up
+    # until a training cell cannot find the weights. With thirty people unpacking a tarball
+    # wherever they like, that will happen, so check the shape of the directory now and say
+    # what to do about it.
+    if not os.path.isdir(os.path.join(path, "base_model")):
+        entries = sorted(e for e in os.listdir(path) if not e.startswith("."))
+        nested = [e for e in entries if os.path.isdir(os.path.join(path, e, "base_model"))]
+        hint = (
+            f"\n\nDid you mean {os.path.join(path, nested[0])!r}? That one contains base_model/."
+            if nested
+            else (
+                "\n\nSHARED_DIR must point at the directory that *directly contains* "
+                "base_model/. After unpacking assets.tar.gz, that is usually the directory "
+                "the archive created, not the one you unpacked it into."
+            )
+        )
+        raise FileNotFoundError(
+            f"{path!r} exists but does not contain base_model/.\n"
+            f"It contains: {', '.join(entries[:12]) or '(nothing)'}"
+            f"{hint}"
         )
 
     _OVERRIDE = path

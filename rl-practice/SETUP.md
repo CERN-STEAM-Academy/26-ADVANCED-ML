@@ -31,43 +31,68 @@ Request the GPU when you create the notebook server. Adding one later means a ne
 
 ## 2. Setup, once
 
+Two things to get: the code, from git, and the data, from a download link. Neither is much
+use without the other.
+
 Open a terminal in JupyterLab (File, New, Terminal) and run:
 
 ```bash
-git clone <this-repository>
+# 1. the code
+git clone https://github.com/CERN-STEAM-Academy/26-ADVANCED-ML.git
 cd 26-ADVANCED-ML/rl-practice
+
+# 2. the python dependencies
 pip install --user -c constraints.txt -r requirements.txt
+
+# 3. the data: about 1 GB, unpack it wherever you like
+cd ~
+wget -O assets.tar.gz "PASTE_THE_CERNBOX_LINK_HERE"
+tar xzf assets.tar.gz
 ```
 
+Then **tell the notebooks where you unpacked it**. In the first cell of either notebook:
+
+```python
+SHARED_DIR = "~/rl-practice-assets"    # whichever directory now contains base_model/
+```
+
+That is the whole setup. No environment variables, no kernel restart.
+
+### Getting `SHARED_DIR` right
+
+It must point at the directory that **directly contains `base_model/`**. After unpacking,
+check with:
+
+```bash
+ls ~/rl-practice-assets      # should list: base_model  dqn  reference_adapters  ...
+```
+
+If you point it one level too high or too low, the notebook stops immediately and tells you
+what it found and what it expected - it does not fail quietly forty minutes later. Running
+the first cell prints where every artefact was resolved from, so read that output once.
+
+### About `pip install --user`
+
 `--user` because the image's `site-packages` is root-owned and you cannot write to it.
-Installs land in `~/.local`, which is on your persistent volume and survives a server
-restart.
+Installs land in `~/.local`, which is on your persistent volume and survives a restart.
 
 **Do not drop the `-c constraints.txt`.** It pins torch, torchvision, torchaudio and numpy
 to what the image already ships. Without it, one of the packages being installed can decide
 it needs a newer torch, and pip will quietly replace the CUDA build the image was tested
-with. That failure surfaces much later as `torch.cuda.is_available()` returning False, or
-as kernels that do not exist for this GPU, and it is miserable to diagnose. With the
-constraints file, the same situation is an install-time resolver error instead.
+with. That surfaces much later as `torch.cuda.is_available()` returning False, or kernels
+that do not exist for this GPU, and it is miserable to diagnose. With the constraints file,
+the same situation is an install-time resolver error instead.
 
-The image also sets `PIP_CONSTRAINT=/etc/pip-constraints.txt` (which pins `numpy==1.24.4`).
+The image also sets `PIP_CONSTRAINT=/etc/pip-constraints.txt` (pinning `numpy==1.24.4`).
 Passing `-c` on the command line does **not** override that - pip applies both files. This
 was verified rather than assumed.
 
-### The model weights
+### If you skip the download
 
-The repository does not contain them. They are about a gigabyte, they are not source, and
-thirty people downloading the same gigabyte at once is not a plan. Get them one of two
-ways:
-
-```bash
-# (a) you were given a shared path - nothing to download, see section 4
-# (b) download your own copy, needs network access to huggingface.co
-python tools/prestage.py --model
-```
-
-Note that `TRAIN_FROM_SCRATCH = False` does **not** avoid this. The reference adapters in
-`assets/` are LoRA deltas of 17 MB each and are useless without the base weights underneath.
+You can, for notebook 1: it is CPU-only and generates everything it uses, so it runs from a
+bare clone. Notebook 2 cannot - it needs the model weights. With `SHARED_DIR = None` it
+falls back to downloading them from the HuggingFace hub on first use, which needs network
+access and takes a few minutes.
 
 ---
 
@@ -129,62 +154,62 @@ from the notebook.
 
 ---
 
-## 5. For instructors: pre-staging
+## 5. For instructors: building assets.tar.gz
 
-Put a copy of the artefacts on a shared read-only volume - at CERN, EOS - laid out exactly
-like the repository's `assets/`:
+Nothing under `assets/` is in git - not the model, and not the reference runs. Weights are
+not source, and 34 MB of binary adapters bloats every clone forever. It is all distributed
+as one archive instead.
 
-```
-/eos/project/.../rl-practice/
-    base_model/            <- the ~1 GB that is not in git; the only one that matters
-    reference_adapters/    <- optional, the repository already ships these
-    reference_logs/
-    snapshots/
-    dqn/
-```
+### What goes in it
 
-### What to copy, exactly
-
-Everything below already exists in the repository except `base_model`, which is the only
-thing that genuinely has to be staged. Copy the whole `assets/` directory and you are done:
-
-| from the repository | size | needed for |
+| directory | size | needed for |
 |---|---|---|
-| `assets/base_model/` | **954 MB** | **everything in notebook 2** - the only mandatory one |
-| `assets/reference_adapters/act1/`, `act4/` | 17 MB each | `TRAIN_FROM_SCRATCH = False` in notebook 2 |
-| `assets/reference_logs/` | 48 KB | the same fallback: metrics, and sampled completions |
-| `assets/snapshots/` | 12 KB | the same fallback: before/after evaluations |
-| `assets/dqn/` | 320 KB | `TRAIN_FROM_SCRATCH = False` in notebook 1 |
+| `base_model/` | **954 MB** | **everything in notebook 2** - the only mandatory one |
+| `reference_adapters/act1/`, `act4/` | 17 MB each | `TRAIN_FROM_SCRATCH = False`, notebook 2 |
+| `reference_logs/` | 48 KB | the same fallback: metrics and sampled completions |
+| `snapshots/` | 12 KB | the same fallback: before/after evaluations |
+| `dqn/` | 252 KB | `TRAIN_FROM_SCRATCH = False`, notebook 1 |
+| | **~990 MB** | |
+
+### Building it
+
+On any machine with network access and a GPU:
 
 ```bash
-cp -r rl-practice/assets/. /eos/project/.../rl-practice/
+python tools/prestage.py --all        # ~45 min on a T4: weights, DQN runs, both GRPO runs
 ```
 
-If you are short of space or time, `base_model/` alone is enough: the other four are
-already in git, and students get them by cloning.
-
-Build `base_model` on any machine with network access:
+or, if you only need the weights and are happy with the reference runs already produced:
 
 ```bash
-python tools/prestage.py --model            # just the weights, a few minutes
-python tools/prestage.py --all              # weights, DQN runs, both GRPO reference runs
+python tools/prestage.py --model      # a few minutes, just the ~1 GB of weights
 ```
 
-`--all` takes roughly 45 minutes on a T4 and is only needed if you want to regenerate the
-reference runs; the repository already contains them.
+Then pack it with a top-level directory, so that unpacking it somewhere untidy does not
+scatter files across the student's home directory:
 
-Then tell students the path. Either they set `SHARED_DIR` in the first cell, or you set it
-for the whole class on the notebook server spec (Advanced options, environment variables):
-
-```
-RLPRACTICE_SHARED_DIR=/eos/project/.../rl-practice
+```bash
+cd rl-practice
+tar czf assets.tar.gz --transform 's,^assets,rl-practice-assets,' assets
 ```
 
-with no notebook edits at all. Nothing ever writes to this directory: all output goes to
-the student's own checkout.
+Upload that to CERNBox, make the link public, and put the link in section 2 above.
 
-If the weights are somewhere that does not follow the `assets/` layout, point straight at
-them instead with `RLPRACTICE_MODEL_DIR=/eos/.../whatever`.
+### Or use a shared filesystem instead
+
+If every student has the same mount - EOS, for instance - skip the download entirely. Put
+the unpacked directory somewhere readable and set it once on the notebook-server spec
+(Advanced options, environment variables):
+
+```
+RLPRACTICE_SHARED_DIR=/eos/project/.../rl-practice-assets
+```
+
+Students then do nothing at all: no download, no `SHARED_DIR` to edit. Nothing ever writes
+to that directory; all output goes to the student's own checkout.
+
+If the weights are somewhere that does not follow this layout, point straight at them with
+`RLPRACTICE_MODEL_DIR=/eos/.../whatever` instead.
 
 ---
 
@@ -202,7 +227,13 @@ largest single lever on peak memory, because the logits tensor is
 `batch x sequence x 152,000 vocabulary`.
 
 **Cannot download the model.** You will get an error naming every path that was searched
-and the three ways to fix it. The usual answer is `SHARED_DIR`.
+and the ways to fix it. The usual answer is that `SHARED_DIR` is not set, or is set to the
+wrong level of the unpacked archive - it must point at the directory that directly contains
+`base_model/`.
+
+**`SHARED_DIR` is set but the notebook says it does not contain `base_model/`.** You have
+pointed at the directory you unpacked *into* rather than the one the archive created. The
+error message suggests the right one; use that.
 
 **`ModuleNotFoundError: No module named 'rlpractice'`.** You are running the notebook from
 the wrong directory. Open it from `notebooks/`, not from the repository root.

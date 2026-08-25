@@ -83,10 +83,10 @@ Two flags are defined here and used much later:
         r'''
 import sys, os; sys.path.insert(0, os.path.abspath(".."))
 
-# Where the big files live. Notebook 1 needs nothing large - it is CPU-only and generates
-# everything it uses - so this is here purely so that both notebooks are configured the
-# same way. Set it to a shared read-only path (at CERN, an /eos path) if you were given
-# one; None means "use this repository".
+# Where you unpacked assets.tar.gz, if you did. Notebook 1 needs nothing large - it is
+# CPU-only and generates everything it uses - so this only matters if you set
+# TRAIN_FROM_SCRATCH = False below and want the pre-staged DQN runs. Same setting as
+# notebook 2; None means "use assets/ inside this repository".
 from rlpractice import paths
 SHARED_DIR = None
 paths.use_shared(SHARED_DIR, verbose=False)
@@ -762,22 +762,22 @@ keyed by label, so every cell below this one works either way.
     ),
     code(
         r'''
-ASSET_DIR = os.path.abspath(os.path.join("..", "assets", "dqn"))
-
-
 def get_result(label, config):
     """Return a finished run of ``config``, either loaded from disk or trained now.
 
     The loaded and the trained object are the same ``DQNResult`` type carrying the same
     fields, so nothing downstream needs to know which branch was taken.
     """
-    asset_path = os.path.join(ASSET_DIR, f"{label}.pt")
-
     if not TRAIN_FROM_SCRATCH:
-        if os.path.exists(asset_path):
+        # paths.asset searches the repository first and then wherever assets.tar.gz was
+        # unpacked (SHARED_DIR, set in the configuration cell at the top).
+        asset_dir = paths.asset("dqn")
+        asset_path = os.path.join(asset_dir, f"{label}.pt") if asset_dir else None
+        if asset_path and os.path.exists(asset_path):
             print(f"[{label}] loading pre-staged run from {asset_path}")
             return dqn.load_result(asset_path)
-        print(f"[{label}] WARNING: no pre-staged run at {asset_path}, training instead")
+        print(f"[{label}] no pre-staged run found, training instead")
+        print(f"[{label}]   looked in: {', '.join(paths.candidates('dqn'))}")
 
     env = dqn.make_env(config.env_id, seed=config.seed)
     try:

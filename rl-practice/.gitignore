@@ -7,11 +7,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# The base model is a ~1 GB download, not a source artefact. tools/prestage.py --model
-# fetches it, and the loader falls back to the hub if it is absent. Everything else in
-# assets/ is small and IS committed, because it is the insurance policy that lets a
-# student continue when their own run diverges.
-assets/base_model/
+# Nothing under assets/ belongs in git. The base model is a ~1 GB download and the
+# reference adapters are 17 MB each of binary weights - none of it is source, and all of
+# it bloats every clone forever. It is distributed as a separate assets.tar.gz; students
+# unpack it wherever they like and point SHARED_DIR at it (see SETUP.md).
+assets/
 
 # Quiz questions with answers. Not for the students' checkout.
 exam-questions.md
