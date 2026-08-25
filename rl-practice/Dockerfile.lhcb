@@ -1,0 +1,124 @@
+# RL practice session, on the LHCb-challenge base, with the assets baked in.
+#
+#   docker build -t registry.cern.ch/itwinai/rl:2026-lhcb -f rl-practice/Dockerfile.lhcb .
+#   docker push registry.cern.ch/itwinai/rl:2026-lhcb
+#
+# Difference from rl-practice/Dockerfile: this one starts from the STEAM Academy LHCb
+# challenge image, so one image serves both parts of the academy, and it carries the ~1 GB
+# of model weights and reference runs, so students do not download anything at all. Setup
+# becomes `git clone`, full stop.
+#
+# TWO THINGS ABOUT THIS BASE THAT DRIVE THE DESIGN.
+#
+# 1. Its default `python` is NOT the base interpreter. PATH starts with
+#    /opt/conda/envs/xdt/bin, a separate Python 3.12 conda environment holding the LHCb
+#    challenge's own pinned dependencies and the xdt package. Installing our stack there
+#    would risk breaking the other half of the academy, so everything below goes into the
+#    base 3.11 environment at /opt/conda instead - which is also the version this session
+#    was developed and measured against - and is exposed to students as its own Jupyter
+#    kernel. The xdt environment is left exactly as it was.
+#
+# 2. It is miniforge/conda-forge, like ngt/scipy:master. That matters: the ngt/pytorch
+#    image's conda scipy is linked against a newer libstdc++ than its system provides, so
+#    `import sklearn` raises, and transformers imports sklearn behind a guard that only
+#    checks whether the package is installed rather than whether it imports. The build
+#    check below asserts that chain works.
+FROM registry.cern.ch/codabench/steam_academy_lhcb_challenge:v2
+
+USER root
+
+# The base 3.11 interpreter, addressed explicitly, because `python` on PATH is xdt's 3.12.
+ENV RL_PYTHON=/opt/conda/bin/python
+
+RUN printf 'torch==2.3.1\nnumpy<2\n' > /etc/rl-practice-constraints.txt
+
+# cu121 is the build with sm75 kernels, which is what a T4 needs.
+RUN $RL_PYTHON -m pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cu121 \
+      -c /etc/rl-practice-constraints.txt \
+      torch==2.3.1
+
+COPY rl-practice/requirements.txt /tmp/requirements.txt
+RUN $RL_PYTHON -m pip install --no-cache-dir \
+      -c /etc/rl-practice-constraints.txt -r /tmp/requirements.txt \
+ && rm -f /tmp/requirements.txt
+
+# A kernel of its own, so a student picks "Python 3.11 (RL practice)" in JupyterLab and
+# gets this environment rather than xdt's 3.12.
+RUN $RL_PYTHON -m ipykernel install --name rl-practice \
+      --display-name "Python 3.11 (RL practice)" --prefix /usr/local
+
+# The assets: ~1 GB of model weights, reference adapters, logs, snapshots and DQN runs.
+# Announcing the location with RLPRACTICE_SHARED_DIR is what makes this zero-configuration:
+# rlpractice.paths reads that variable, and the notebooks' default SHARED_DIR = None falls
+# back to it. Read-only by construction - nothing in the session ever writes here.
+COPY rl-practice/assets /opt/rl-practice-assets
+ENV RLPRACTICE_SHARED_DIR=/opt/rl-practice-assets
+RUN chmod -R a+rX /opt/rl-practice-assets
+
+# The session itself: package, notebooks, tools and tests. Two copies, deliberately.
+#
+#   /opt/rl-practice        canonical, read-only, always the version this image was built
+#                           from - so a student who breaks their copy can diff against it.
+#   /tmp_home/jovyan/...    seeded into the student's home on container start by the
+#                           base image's 01-copy-tmp-home hook, which runs
+#                           `cp -n -r -T "$HOME_TMP" "$HOME"`. The -n matters: it never
+#                           clobbers, so edits survive a restart of the notebook server.
+#
+# assets/ is deliberately NOT copied here - it lives once at /opt/rl-practice-assets and
+# is found through RLPRACTICE_SHARED_DIR. Copying it into home as well would put a
+# gigabyte on every student's PVC for no reason.
+COPY rl-practice/rlpractice   /opt/rl-practice/rlpractice
+COPY rl-practice/notebooks    /opt/rl-practice/notebooks
+COPY rl-practice/tools        /opt/rl-practice/tools
+COPY rl-practice/tests        /opt/rl-practice/tests
+COPY rl-practice/requirements.txt rl-practice/constraints.txt \
+     rl-practice/README.md rl-practice/SETUP.md /opt/rl-practice/
+
+RUN mkdir -p /tmp_home/jovyan \
+ && cp -r /opt/rl-practice /tmp_home/jovyan/rl-practice \
+ && rm -rf /tmp_home/jovyan/rl-practice/tests /tmp_home/jovyan/rl-practice/tools \
+ && find /opt/rl-practice /tmp_home/jovyan/rl-practice -name __pycache__ -type d -exec rm -rf {} + \
+ && chmod -R a+rX /opt/rl-practice \
+ && chmod -R g+w /tmp_home/jovyan/rl-practice
+
+# Everything importable without a clone and without PYTHONPATH gymnastics.
+ENV PYTHONPATH=/opt/rl-practice
+
+# Fail the build rather than the lecture. Every assertion here is a failure that actually
+# happened during development.
+RUN $RL_PYTHON - <<'PY'
+import os
+import torch, transformers, trl, peft, accelerate, datasets, gymnasium, numpy as np
+assert torch.__version__ == "2.3.1+cu121", f"wrong torch build: {torch.__version__}"
+assert np.__version__.startswith("1."), f"numpy {np.__version__} breaks torch 2.3.1"
+# The import chain that dies on the ngt/pytorch image.
+import sklearn, scipy.optimize                                   # noqa: F401
+from transformers import AutoModelForCausalLM, AutoTokenizer     # noqa: F401
+from trl import GRPOTrainer                                      # noqa: F401
+# The baked-in assets must be complete, and discoverable without any notebook edit.
+root = os.environ["RLPRACTICE_SHARED_DIR"]
+for name in ("base_model/config.json", "base_model/model.safetensors", "dqn/working.pt",
+             "reference_adapters/act1/adapter_model.safetensors", "reference_logs/act1.csv",
+             "snapshots/before.json"):
+    assert os.path.exists(os.path.join(root, name)), f"missing asset: {name}"
+# The session's own code must import from the image, with no clone and no PYTHONPATH edit.
+import rlpractice, rlpractice.paths as paths, rlpractice.dqn, rlpractice.baird  # noqa: F401
+assert paths.model_dir(), "the baked-in assets are not discoverable via RLPRACTICE_SHARED_DIR"
+for name in ("reference_adapters", "reference_logs", "snapshots", "dqn"):
+    assert paths.asset(name), f"{name} not resolvable"
+for nb in ("01_classics_student", "02_grpo_student", "01_classics_solutions", "02_grpo_solutions"):
+    p = f"/opt/rl-practice/notebooks/{nb}.ipynb"
+    assert os.path.exists(p), f"missing notebook: {p}"
+    assert os.path.exists(f"/tmp_home/jovyan/rl-practice/notebooks/{nb}.ipynb"), f"not seeded: {nb}"
+print("build check OK:", torch.__version__, "| transformers", transformers.__version__,
+      "| numpy", np.__version__, "| assets at", root, "| code + notebooks embedded")
+PY
+
+# The xdt environment must still work - this image serves the LHCb challenge too.
+RUN python -c "import gymnasium, xdt.dt.envs; print('xdt environment intact:', gymnasium.__version__)"
+
+LABEL org.opencontainers.image.description="CERN STEAM Academy 2026 - RL practice session \
+with assets embedded, on the LHCb challenge base. torch 2.3.1+cu121 for NVIDIA T4 (sm75)."
+
+USER ${NB_USER}

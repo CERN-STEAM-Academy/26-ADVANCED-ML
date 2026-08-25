@@ -71,6 +71,14 @@ def repo_assets() -> str:
 #: notebook server was launched with.
 _OVERRIDE: str | None = None
 
+#: Whether *we* were the ones who put SHARED_ENV into os.environ. This matters for the
+#: difference between the two ways the variable gets set. If an image baked the assets in
+#: and announced them with ENV RLPRACTICE_SHARED_DIR, clearing the override must leave that
+#: alone - it is the only copy there is. If use_shared() exported it a moment ago, clearing
+#: the override should take it back out again, or the value outlives its scope and leaks
+#: into anything that reads the environment afterwards.
+_EXPORTED_BY_US: bool = False
+
 
 def use_shared(path: str | None, verbose: bool = True) -> str | None:
     """Point this session at a shared assets directory. Returns the resolved path.
@@ -88,14 +96,28 @@ def use_shared(path: str | None, verbose: bool = True) -> str | None:
     finding out that an EOS mount is not there is much better at the top of the notebook
     than forty minutes in.
     """
-    global _OVERRIDE
+    global _OVERRIDE, _EXPORTED_BY_US
 
     if path is None:
+        # Clear the notebook-cell override and fall back to the environment, which is
+        # where an instructor - or the image itself - sets the shared location. It must
+        # NOT unset the variable: an image that bakes the assets in and announces them
+        # with ENV RLPRACTICE_SHARED_DIR would be silently disarmed by the default
+        # SHARED_DIR = None in the notebook's first cell, and the model would go missing
+        # on a machine where it was right there all along.
         _OVERRIDE = None
-        os.environ.pop(SHARED_ENV, None)
+        if _EXPORTED_BY_US:
+            os.environ.pop(SHARED_ENV, None)
+            _EXPORTED_BY_US = False
         if verbose:
-            print("[paths] using the repository checkout only.\n" + describe())
-        return None
+            inherited = shared_root()
+            print(
+                f"[paths] SHARED_DIR is None; using {inherited!r} from the environment."
+                if inherited
+                else "[paths] SHARED_DIR is None; using this repository's own assets/."
+            )
+            print(describe())
+        return shared_root()
 
     path = os.path.expanduser(str(path).strip())
     if not os.path.isdir(path):
@@ -130,6 +152,7 @@ def use_shared(path: str | None, verbose: bool = True) -> str | None:
 
     _OVERRIDE = path
     os.environ[SHARED_ENV] = path
+    _EXPORTED_BY_US = True
     if verbose:
         print(describe())
     return path

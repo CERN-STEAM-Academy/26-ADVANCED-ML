@@ -55,6 +55,12 @@ step() {
 # --- 1. dependencies -----------------------------------------------------------------
 install_deps() {
   [ "${SKIP_PIP:-0}" = "1" ] && { echo "  (skipped)"; return 0; }
+  # Already satisfied? An image built for this session has the whole stack baked in, and
+  # reinstalling it over a network filesystem is the slowest thing in the script.
+  if $PYTHON -c "import torch, transformers, trl, peft, datasets, gymnasium" 2>/dev/null; then
+    echo "  dependencies already present, nothing to install"
+    return 0
+  fi
   # -c constraints.txt is not optional: it stops pip replacing the image's CUDA build of
   # torch, which would fail much later and far less obviously.
   $PYTHON -m pip install --user -q -c constraints.txt -r requirements.txt
@@ -63,8 +69,17 @@ install_deps() {
 # --- 2. data -------------------------------------------------------------------------
 fetch_assets() {
   [ "${SKIP_DATA:-0}" = "1" ] && { echo "  (skipped)"; return 0; }
-  if [ -f assets/base_model/config.json ]; then
-    echo "  assets/base_model already present, not re-downloading"
+  # Ask the resolver rather than looking in one hardcoded place. It searches the
+  # repository, then RLPRACTICE_SHARED_DIR - which covers an unpacked tarball and an
+  # image that baked the assets in and announced them. Only download if none of that
+  # turned anything up.
+  if $PYTHON -c "
+import sys
+sys.path.insert(0, '"'"'$ROOT'"'"')
+from rlpractice import paths
+found = paths.model_dir()
+print('  assets already available:', found) if found else sys.exit(1)
+" 2>/dev/null; then
     return 0
   fi
   echo "  downloading 782 MB from CERNBox..."

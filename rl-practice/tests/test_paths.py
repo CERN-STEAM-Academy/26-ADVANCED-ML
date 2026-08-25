@@ -15,6 +15,28 @@ import pytest
 from rlpractice import paths
 
 
+@pytest.fixture(autouse=True)
+def _isolate_global_path_state():
+    """use_shared() deliberately mutates module state and os.environ so that subprocesses
+    inherit the setting. That is right in a notebook and poison in a test suite: one test
+    pointing at a tmp_path left every later test loading the model from a directory pytest
+    had already deleted. Snapshot and restore around every test in this file."""
+    import os as _os
+
+    saved_override = paths._OVERRIDE
+    saved_exported = paths._EXPORTED_BY_US
+    saved_env = _os.environ.get(paths.SHARED_ENV)
+    try:
+        yield
+    finally:
+        paths._OVERRIDE = saved_override
+        paths._EXPORTED_BY_US = saved_exported
+        if saved_env is None:
+            _os.environ.pop(paths.SHARED_ENV, None)
+        else:
+            _os.environ[paths.SHARED_ENV] = saved_env
+
+
 @pytest.fixture
 def fake_layout(tmp_path, monkeypatch):
     """A fresh clone (empty assets/) plus a shared volume that has the weights."""
@@ -172,3 +194,19 @@ def test_a_correctly_pointed_shared_dir_is_accepted(tmp_path, monkeypatch):
     assert paths.use_shared(str(good), verbose=False) == str(good)
     assert paths.model_dir() == str(good / "base_model")
     paths.use_shared(None, verbose=False)
+
+
+def test_use_shared_none_does_not_unset_the_environment(monkeypatch, tmp_path):
+    """An image can bake the assets in and announce them with ENV RLPRACTICE_SHARED_DIR.
+    The notebook's default SHARED_DIR = None must fall back to that, not delete it -
+    otherwise the model goes missing on the one machine where it was already present."""
+    baked = tmp_path / "opt" / "rl-practice-assets"
+    (baked / "base_model").mkdir(parents=True)
+    (baked / "base_model" / paths.MODEL_SENTINEL).write_text("{}")
+    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path / "checkout"))
+    (tmp_path / "checkout" / "assets").mkdir(parents=True)
+    monkeypatch.setenv(paths.SHARED_ENV, str(baked))
+
+    assert paths.use_shared(None, verbose=False) == str(baked)
+    assert os.environ.get(paths.SHARED_ENV) == str(baked), "the env var was unset"
+    assert paths.model_dir() == str(baked / "base_model")
