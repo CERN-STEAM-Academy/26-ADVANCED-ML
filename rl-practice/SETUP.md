@@ -44,32 +44,60 @@ cd 26-ADVANCED-ML/rl-practice
 # 2. the python dependencies
 pip install --user -c constraints.txt -r requirements.txt
 
-# 3. the data: about 1 GB, unpack it wherever you like
+# 3. the data: 782 MB, and it unpacks into a directory called assets/
+#    NOTE the URL form: /s/<token>/download   (see the warning below)
 cd ~
-wget -O assets.tar.gz "PASTE_THE_CERNBOX_LINK_HERE"
+wget -O assets.tar.gz "https://cernbox.cern.ch/s/QbQHtpgOSgkpCho/download"
 tar xzf assets.tar.gz
 ```
 
 Then **tell the notebooks where you unpacked it**. In the first cell of either notebook:
 
 ```python
-SHARED_DIR = "~/rl-practice-assets"    # whichever directory now contains base_model/
+SHARED_DIR = "~/assets"
 ```
 
 That is the whole setup. No environment variables, no kernel restart.
 
+### The download URL has a trap in it
+
+The share page you may have been sent looks like this, and opens fine in a browser:
+
+```
+https://cernbox.cern.ch/index.php/s/QbQHtpgOSgkpCho
+```
+
+but appending `/download` to *that* form does not work. CERNBox answers it with a
+redirect to `https://cernbox.cern.chs/...` - note the stray `s` on the hostname - and
+`wget` dies with "Could not resolve host". Verified, not guessed.
+
+Use the short form instead, which returns the archive directly:
+
+```
+https://cernbox.cern.ch/s/QbQHtpgOSgkpCho/download
+```
+
 ### Getting `SHARED_DIR` right
 
-It must point at the directory that **directly contains `base_model/`**. After unpacking,
-check with:
+It must point at the directory that **directly contains `base_model/`**. This archive
+unpacks to `assets/`, so if you unpacked it in your home directory, that is `~/assets`:
 
 ```bash
-ls ~/rl-practice-assets      # should list: base_model  dqn  reference_adapters  ...
+ls ~/assets      # base_model  dqn  reference_adapters  reference_logs  snapshots
 ```
 
 If you point it one level too high or too low, the notebook stops immediately and tells you
-what it found and what it expected - it does not fail quietly forty minutes later. Running
-the first cell prints where every artefact was resolved from, so read that output once.
+what it found, what it expected, and usually which directory you actually meant. It does
+not fail quietly forty minutes later. The first cell prints where every artefact was
+resolved from, so read that output once.
+
+**Shortcut:** unpack the archive inside the repository instead, and there is nothing to
+configure at all - the archive's `assets/` lands exactly where the notebooks look by
+default, so `SHARED_DIR` can stay `None`:
+
+```bash
+cd 26-ADVANCED-ML/rl-practice && tar xzf ~/assets.tar.gz
+```
 
 ### About `pip install --user`
 
@@ -136,12 +164,13 @@ them from the solutions and will discard your edits.
 ### Two flags, both in the first cells
 
 ```python
-SHARED_DIR = None          # or "/eos/project/.../rl-practice"
+SHARED_DIR = None          # or "~/assets", or "/eos/project/.../assets"
 ```
 
-Where the large files live. `None` means "use this repository". If you were given an EOS
-path, put it here - you do not need to set any environment variable or restart the kernel.
-It is checked immediately, so a mount that is not up fails now rather than forty minutes in.
+Where you unpacked `assets.tar.gz`. `None` means "look inside this repository", which is
+correct if you unpacked it there. You do not need to set an environment variable or restart
+the kernel, and the path is checked immediately, so a wrong one fails now rather than forty
+minutes in.
 
 ```python
 TRAIN_FROM_SCRATCH = True  # False loads the pre-staged runs instead
@@ -185,15 +214,18 @@ or, if you only need the weights and are happy with the reference runs already p
 python tools/prestage.py --model      # a few minutes, just the ~1 GB of weights
 ```
 
-Then pack it with a top-level directory, so that unpacking it somewhere untidy does not
-scatter files across the student's home directory:
+Then pack it, keeping `assets` as the top-level directory so that unpacking it inside the
+repository is a no-configuration install:
 
 ```bash
 cd rl-practice
-tar czf assets.tar.gz --transform 's,^assets,rl-practice-assets,' assets
+tar czf assets.tar.gz assets        # 782 MB
 ```
 
-Upload that to CERNBox, make the link public, and put the link in section 2 above.
+Upload it to CERNBox and make the link public. Then give students the **short-form**
+download URL, `https://cernbox.cern.ch/s/<token>/download` - the `/index.php/s/<token>`
+form redirects to a malformed hostname when `/download` is appended and will not work with
+`wget` or `curl`.
 
 ### Or use a shared filesystem instead
 
