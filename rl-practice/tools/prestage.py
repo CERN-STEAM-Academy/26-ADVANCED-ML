@@ -28,7 +28,7 @@ Artefacts, all under ``assets/``::
     snapshots/before.json       frozen evaluation of the base model
     snapshots/after_act1.json   frozen evaluation after the beta = 0.0 run
     snapshots/after_act4.json   frozen evaluation after the beta = 0.04 run
-    dqn/{working,CONFIG_A,CONFIG_B,CONFIG_C}.pt
+    dqn/{working,CONFIG_A,CONFIG_B}.pt
 """
 
 from __future__ import annotations

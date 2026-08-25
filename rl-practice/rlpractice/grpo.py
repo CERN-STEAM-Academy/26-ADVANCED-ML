@@ -38,25 +38,35 @@ from typing import Any
 
 import torch
 
+from . import paths
+
 #: The base model. 0.5B is small enough to train on a T4 inside a lecture slot, and
 #: instruction-tuned so that Act 0 has some general ability to lose.
 MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 
-#: Where ``tools/prestage.py`` puts the downloaded weights.
-DEFAULT_LOCAL_DIR = os.environ.get("RLPRACTICE_MODEL_DIR", "assets/base_model")
+#: Kept for backwards compatibility. Real resolution lives in ``rlpractice.paths``, which
+#: also searches a shared read-only volume - on a CERN Kubeflow server, an /eos path.
+DEFAULT_LOCAL_DIR = os.environ.get(paths.MODEL_ENV, "assets/base_model")
 
 
-def local_model_path(local_dir: str | os.PathLike = DEFAULT_LOCAL_DIR) -> str | None:
-    """The pre-staged snapshot path, if it looks complete. Otherwise None."""
-    path = os.fspath(local_dir)
-    if os.path.isdir(path) and os.path.exists(os.path.join(path, "config.json")):
-        return path
-    return None
+def local_model_path(local_dir: str | os.PathLike | None = None) -> str | None:
+    """The pre-staged model directory, or None if the weights must come from the hub.
+
+    Searches, in order: ``$RLPRACTICE_MODEL_DIR``, ``assets/base_model`` in the checkout,
+    then ``$RLPRACTICE_SHARED_DIR/base_model``. Pass ``local_dir`` to bypass all of that
+    and check exactly one place.
+    """
+    if local_dir is not None:
+        path = os.fspath(local_dir)
+        if os.path.isdir(path) and os.path.exists(os.path.join(path, paths.MODEL_SENTINEL)):
+            return path
+        return None
+    return paths.model_dir()
 
 
 def load_model_and_tokenizer(
     model_id: str = MODEL_ID,
-    local_dir: str | os.PathLike = DEFAULT_LOCAL_DIR,
+    local_dir: str | os.PathLike | None = None,
     device: str = "cuda",
     verbose: bool = True,
 ):
@@ -67,13 +77,39 @@ def load_model_and_tokenizer(
     source = path or model_id
     kwargs: dict[str, Any] = {"local_files_only": True} if path else {}
 
-    tokenizer = AutoTokenizer.from_pretrained(source, **kwargs)
-    model = AutoModelForCausalLM.from_pretrained(
-        source,
-        torch_dtype=torch.float32,       # fp32 master weights; fp16=True does the rest
-        attn_implementation="sdpa",      # flash-attn has no sm75 kernels
-        **kwargs,
-    )
+    if path is None and verbose:
+        print(
+            f"[grpo] no local copy of {model_id} found, so it will be fetched from the "
+            f"HuggingFace hub (about 1 GB, and it needs network access).\n"
+            f"       Looked in: {', '.join(paths.candidates('base_model'))}\n"
+            f"       To use a shared copy instead, set {paths.SHARED_ENV} (an /eos path at CERN) "
+            f"or {paths.MODEL_ENV}."
+        )
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(source, **kwargs)
+        model = AutoModelForCausalLM.from_pretrained(
+            source,
+            torch_dtype=torch.float32,   # fp32 master weights; fp16=True does the rest
+            attn_implementation="sdpa",  # flash-attn has no sm75 kernels
+            **kwargs,
+        )
+    except Exception as error:
+        if path is not None:
+            raise
+        # The hub was the only option left and it did not work. Say what to do about it,
+        # because "OSError: We couldn't connect to huggingface.co" tells a student nothing.
+        raise RuntimeError(
+            f"Could not load {model_id}. There is no local copy and the hub is not "
+            f"reachable ({type(error).__name__}: {error}).\n\n"
+            f"Fix it in one of these ways:\n"
+            f"  1. python tools/prestage.py --model      (downloads it into assets/base_model)\n"
+            f"  2. export {paths.SHARED_ENV}=/eos/.../rl-practice   (a shared copy laid out\n"
+            f"     like assets/, so the weights are at $" + paths.SHARED_ENV + "/base_model)\n"
+            f"  3. export {paths.MODEL_ENV}=/path/to/the/weights     (points straight at them)\n\n"
+            f"Note that TRAIN_FROM_SCRATCH = False does NOT avoid this: the reference "
+            f"adapters are LoRA deltas and are useless without the base weights underneath."
+        ) from error
     if device:
         model = model.to(device)
 
@@ -215,22 +251,23 @@ TRAIN_SEED_SPLIT = 0
 N_EVAL = 64
 N_TRAIN = 512
 
-#: Wall-clock budgets. Act 4 gets less than Act 1 on purpose: the trend is the point, not
-#: convergence, and the session has to end on time.
-ACT1_TIME_BUDGET_SECONDS = 900
-ACT4_TIME_BUDGET_SECONDS = 720
-#: An upper bound on steps regardless of how fast the hardware turns out to be.
+#: Wall-clock budgets, set by the length of the session rather than by what would be
+#: ideal. The whole practice - both notebooks - has to fit in 105 minutes including the
+#: talking, so the two training runs together get about sixteen of those minutes.
 #:
-#: 150 is not arbitrary. General perplexity on the mixed-difficulty run rises monotonically
-#: to a peak around step 150 (27.6 -> 33.1) and then partially recovers as the policy
-#: oscillates; held-out accuracy peaks near step 120 at 0.97. Stopping at 150 lands on the
-#: part of the trajectory that shows both blades of the scissors most clearly.
-#:
-#: On this hardware (T4, ~4.7 s/step) the cap binds before either time budget does, and
-#: the budgets act as the safety net for slower hardware rather than the primary control.
-#: That ordering is deliberate: a cap that binds gives a reproducible run, and a time
-#: budget that binds gives a session that still finishes on time.
-MAX_STEPS_CAP = 150
+#: 100 steps is enough. Measured on the reference runs, the interesting part of the
+#: trajectory is over well before then: reward reaches its ceiling by step 15, held-out
+#: accuracy peaks between steps 40 and 120, and general perplexity has done most of its
+#: rise by step 100 (27.6 -> about 28.7 at step 100 against 29.7 at step 150). Going to
+#: 150 buys a slightly larger number and costs four minutes of a session that does not
+#: have four minutes.
+ACT1_TIME_BUDGET_SECONDS = 480
+ACT4_TIME_BUDGET_SECONDS = 420
+#: An upper bound on steps regardless of how fast the hardware turns out to be. On a T4
+#: (~4.7 s/step) the cap binds at about eight minutes and the time budgets are the safety
+#: net for slower hardware. That ordering is deliberate: a cap that binds gives a
+#: reproducible run, and a time budget that binds gives a session that still ends on time.
+MAX_STEPS_CAP = 100
 
 #: Evaluation cadence during training. Perplexity is one cheap forward pass, so it runs
 #: often; accuracy needs generation, so it runs rarely and on a fixed prefix of the eval

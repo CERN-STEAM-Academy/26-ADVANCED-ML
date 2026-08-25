@@ -33,19 +33,23 @@ CELLS = [
         r"""
 # Notebook 1: the classics
 
-Thirty-five minutes, two parts, and one idea running through both of them: a value
-function is defined by a self-referential equation, and every reinforcement learning
-algorithm is a way of solving that equation under progressively worse conditions.
+Thirty minutes, two parts, and one idea running through both of them: a value function is
+defined by a self-referential equation, and every reinforcement learning algorithm is a way
+of solving that equation under progressively worse conditions.
 
 **Part 1, dynamic programming (10 min).** The model is known and the state space is
 small, so the Bellman equations can be solved exactly. You implement policy evaluation
 and value iteration by hand. Nothing here can diverge, and it is worth seeing what that
 feels like before it stops being true.
 
-**Part 2, DQN diagnosis (25 min).** The model is unknown, the states are sampled, and
-the value function is a neural network. This is not an implementation exercise: you are
-given a working DQN, three configurations that each break it in exactly one way, and the
-job of explaining which failure is which.
+**Part 2, the deadly triad (20 min).** The model is unknown, the states are sampled, and
+the value function is a neural network. Not an implementation exercise: you are given a
+working DQN and two configurations that each break it in exactly one way, and the job of
+explaining which failure is which. First, though, a seven-state problem where divergence
+can be proved rather than observed.
+
+The two exercises in part 1 are the only code you write. Everything in part 2 is reading,
+running and explaining.
 
 Notation used throughout: $s$ is a state, $a$ an action, $r$ a reward,
 $p(s', r \mid s, a)$ the transition model, $\gamma \in [0, 1)$ the discount factor,
@@ -70,13 +74,22 @@ Two flags are defined here and used much later:
   overwrite your function with the reference implementation, so the notebook runs end to
   end even with the exercises unanswered. That is how continuous integration checks this
   file; it is not how you should spend the next ten minutes.
-* `TRAIN_FROM_SCRATCH` decides whether part 2 trains its four agents or loads pre-staged
-  runs from `assets/dqn/`. Training all four takes roughly six minutes on a CPU.
+* `TRAIN_FROM_SCRATCH` decides whether part 2 trains its three agents or loads
+  pre-staged runs from `assets/dqn/`. Training all three takes roughly five minutes on a
+  CPU.
 """
     ),
     code(
         r'''
 import sys, os; sys.path.insert(0, os.path.abspath(".."))
+
+# Where the big files live. Notebook 1 needs nothing large - it is CPU-only and generates
+# everything it uses - so this is here purely so that both notebooks are configured the
+# same way. Set it to a shared read-only path (at CERN, an /eos path) if you were given
+# one; None means "use this repository".
+from rlpractice import paths
+SHARED_DIR = None
+paths.use_shared(SHARED_DIR, verbose=False)
 
 # Configure the inline backend explicitly rather than relying on it happening by itself.
 # Matplotlib resolves its backend lazily, on the first figure, so importing pyplot does
@@ -586,9 +599,78 @@ of them in check:
 * a **replay buffer**, large enough to hold many episodes, so a minibatch is roughly i.i.d.
   rather than a correlated slice of the last two seconds of one trajectory.
 
-The third leg, function approximation, has no mitigation beyond a small learning rate and
-gradient clipping - which is precisely why the learning rate is one of the things you are
-about to break.
+The third leg, function approximation, has no mitigation at all beyond a small learning
+rate and gradient clipping.
+
+We are going to check that "any two of the three are safe, all three can diverge" claim
+twice, because one check on its own would not be convincing. First on a problem small
+enough to settle the question exactly, and then on a real agent, where it is messier and
+much more like the thing you will actually be debugging.
+"""
+    ),
+
+    # -------------------------------------------------------------------------
+    # 2.0 Baird's counterexample
+    # -------------------------------------------------------------------------
+    md(
+        r"""
+## 2.0 First, the claim, settled exactly
+
+Before touching a neural network, here is the deadly triad in a form small enough to
+reason about completely. Baird's counterexample (Baird, 1995) is seven states, and every
+reward is zero.
+
+Because every reward is zero, the true value function is zero everywhere - and it is
+*exactly representable* by the linear approximator we are about to use. The perfect
+solution $w = 0$ is sitting right there. This is not a capacity problem, an optimisation
+problem or a tuning problem.
+
+Semi-gradient off-policy TD(0) walks away from it anyway, to infinity.
+
+What makes this worth five minutes is that each leg of the triad can be switched off
+independently:
+
+* replace the target policy with the behaviour policy, and it is **on-policy**;
+* replace the features with an identity matrix, and it is **tabular** - no approximation;
+* regress on the observed return instead of on $r + \gamma v(s')$, and there is **no
+  bootstrapping**.
+
+Any one of those three changes should be enough to make it safe, if the claim is true.
+"""
+    ),
+    code(
+        r'''
+from rlpractice import baird
+
+ablation = baird.triad_ablation(steps=5000, alpha=0.01, seed=0)
+
+print(f"{'configuration':<30}{'final |w|':>14}{'max Re(eig)':>14}")
+for label, data in ablation.items():
+    norm = np.linalg.norm(data["history"][-1])
+    eigenvalue = data["eigenvalue"]
+    shown = "     n/a" if np.isnan(eigenvalue) else f"{eigenvalue:+8.4f}"
+    print(f"{label:<30}{norm:>14.4g}{shown:>14}")
+
+print()
+print("max Re(eig) is the largest real part of an eigenvalue of the matrix governing the")
+print("EXPECTED update. Positive means the iteration diverges for every step size, however")
+print("small - so this is not a matter of tuning alpha, and not sampling noise either.")
+'''
+    ),
+    code(
+        r'''
+baird.plot_triad(ablation)
+plt.show()
+'''
+    ),
+    md(
+        r"""
+That is the claim settled: all three legs together diverge, and removing any single one of
+them leaves the weights bounded. Note the eigenvalue column in particular - the divergence
+is a property of the update operator itself, not of unlucky sampling, so no amount of
+smaller step sizes or longer training would rescue it.
+
+Now the messy version.
 """
     ),
     md(
@@ -631,12 +713,17 @@ Each of the three broken configurations below removes exactly one of these.
     ),
     md(
         r"""
-## 2.2 Four configurations, one change each
+## 2.2 Two broken configurations, one change each
 
-`DQNConfig` is a dataclass, and the three broken configurations are built from the working
-one with `dataclasses.replace`. That makes "differs by exactly one field" a fact you can
-print rather than a claim you have to trust, which matters: if a run misbehaves for two
-reasons at once, the exercise teaches nothing.
+`DQNConfig` is a dataclass, and each broken configuration is built from the working one
+with `dataclasses.replace`. That makes "differs by exactly one field" a fact you can print
+rather than a claim you have to trust, which matters: if a run misbehaves for two reasons
+at once, the exercise teaches nothing.
+
+Both breaks attack the **bootstrapping** leg, from opposite ends. One removes the thing
+that holds the target still; the other removes the thing that grounds the recursion in an
+observed fact. Neither touches the replay buffer, and that omission is deliberate - see
+the note after the curves.
 """
     ),
     code(
@@ -661,9 +748,9 @@ print("evaluations per run:            ", dqn.WORKING.total_steps // dqn.WORKING
     ),
     md(
         r"""
-## 2.3 Run all four
+## 2.3 Run all three
 
-Roughly ninety seconds each on an unloaded CPU, so about six minutes for the set; a busy
+Roughly ninety seconds each on an unloaded CPU, so about five minutes for the set; a busy
 machine can double that. Evaluation, not training, is most of the cost: twelve thousand
 gradient steps on a two-layer MLP are cheap, whereas five greedy episodes of an agent that
 has learned to balance the pole are up to 2500 environment steps every time.
@@ -846,24 +933,23 @@ answer.
 
 This exercise is prose, not code, and it is the reason part 2 exists.
 
-For each of `CONFIG_A`, `CONFIG_B` and `CONFIG_C`: name the leg of the deadly triad that
-the single changed field attacked, and account for the curve you actually plotted. Use both
-figures and the loss table - two of these runs finish at exactly the same evaluation return
-and could hardly be more different inside.
+For each of `CONFIG_A` and `CONFIG_B`: name what the single changed field removed, and
+account for the curve you actually plotted. Use both figures and the mean $|Q|$ panel -
+the two runs finish at almost exactly the same evaluation return and could hardly be more
+different inside.
 
-One of the three is more interesting than the table in section 2.2 suggests: its curve does
-not show the failure you would predict from the mechanism. Say which, and explain why this
-environment fails to punish that particular change.
+Then one further question, which is the one worth carrying away: both of these break the
+same leg of the triad. Look back at section 2.0. Why did we demonstrate the *other* two
+legs with Baird's counterexample rather than with a DQN configuration here?
 
 Answer in this cell.
 
-<!-- TODO(hint): which leg of the deadly triad did each config break, and why does that produce the curve shape you observed? -->
+<!-- TODO(hint): what did each changed field remove, why does that produce the curve you saw, and why is the triad demonstrated on Baird rather than on CartPole? -->
 
 <!-- BEGIN SOLUTION -->
-The three runs fail in three different ways, and only one of them is divergence.
+Both runs diverge, and they diverge for reasons that are worth keeping separate.
 
-**`CONFIG_A`, `target_update_every: 200 -> 1`. Leg attacked: bootstrapping. Outcome:
-divergence, and it is not close.**
+**`CONFIG_A`, `target_update_every: 200 -> 1`. Removed: the frozen bootstrap target.**
 
 Refreshing the target every step means there is no target network, only the online network
 under a second name. The regression target $y = r + \gamma \max_{a'} Q(s', a')$ therefore
@@ -873,88 +959,64 @@ $s$, which in CartPole is nearly all of them. The $\max$ then selects whichever 
 currently most over-estimated, so the feedback has a systematic upward bias rather than a
 symmetric one. Nothing in the loop damps it.
 
-The numbers say the rest. Mean $|Q|$ is $0.04$ when training begins at step 1000, about
-$1.8 \times 10^3$ five hundred steps later, and $2.7 \times 10^7$ by the end, with the TD
-loss climbing with it into the millions. No true CartPole value can exceed $100$, so five
-orders of magnitude past that ceiling is not a bad estimate, it is not an estimate. Greedy
-evaluation reads 8.8 at the first measurement and 8.8 at every one after: the policy was
-destroyed within a few hundred gradient steps, and the 1073 episodes of roughly nine steps
-each are the pole falling over immediately, again and again. This is the failure the deadly
-triad actually predicts, and removing the target network is what produced it.
+The numbers say the rest. Mean $|Q|$ is about $0.04$ when training begins at step 1000 and
+around $2.7 \times 10^7$ by the end, with the TD loss climbing with it into the millions.
+No true CartPole value can exceed $100$, so five orders of magnitude past that ceiling is
+not a bad estimate, it is not an estimate. Greedy evaluation reads 8.8 at the first
+measurement and 8.8 at every one after: the policy was destroyed within a few hundred
+gradient steps, and the episodes of roughly nine steps each are the pole falling over
+immediately, again and again.
 
-**`CONFIG_C`, `lr: 1e-3 -> 1e-1`. Leg attacked: function approximation. Outcome: it never
-converges, and it destroys what it briefly learns.**
+**`CONFIG_B`, `bootstrap_past_termination: False -> True`. Removed: the base case.**
 
-A gradient step is only justified while it is small enough to stay inside the region where
-the network's local linearisation still describes the network. At $\text{lr} = 10^{-1}$ every
-Adam step is a hundred times longer than the working run's, which puts it well outside that
-region, so every update overshoots.
-The clearest evidence is the loss floor rather than the return: the working run's late TD
-loss has a median around $0.15$, while this run's median is $2.6$ and its minimum over the
-whole run never drops below about $0.05$. It is not converging slowly, it is not converging
-at all - it oscillates around a target it keeps jumping over.
+This one is a single boolean and it is easy to miss what it does. When the pole falls, the
+episode is over, and the value of what comes next is zero *by definition* - not estimated,
+known. That single fact is the only place in the entire algorithm where the recursion
+touches something that is true rather than predicted. Every other value in the table is
+defined in terms of another predicted value.
 
-Its evaluation curve rises to 93 by step 6000 - it does learn something - and then falls
-back to 8.8. Meanwhile mean $|Q|$ inflates to about 83 against the working run's 40: a value
-function claiming that its states are worth nearly a full CartPole lifetime, attached to a
-policy that drops the pole in nine steps. Estimates and behaviour have come apart, which is
-what unconverged function approximation looks like from the outside.
+Store `done=False` there and the base case is gone. Now $Q(s, a)$ is regressed onto
+$r + \gamma \max Q(s')$ at *every* transition including the terminal one, so the whole
+system is a recursion with no anchor. Each sweep multiplies the previous estimate by
+$\gamma$ and adds a positive reward, and the $\max$ over an approximator with noisy
+outputs biases each step slightly upward. There is nothing to converge to.
 
-Note what it does *not* do: it does not reach $10^7$. Worth understanding why, because it
-shows the mitigations doing their job. The target network still freezes the bootstrap target
-for 200 steps at a time, so error can only compound within a window; the Huber loss makes
-the gradient of a large error constant instead of proportional to it; the gradient norm is
-clipped at 10; and Adam normalises the step size. Breaking the function-approximation leg
-while the other two mitigations hold gives instability. Breaking the bootstrapping leg gives
-explosion.
+Measured over three seeds at twelve thousand steps: mean $|Q|$ finishing at 571, 354 and
+367 against a true CartPole ceiling of 100, with the greedy return pinned at the floor
+(8.8, 9.8, 8.8) on every one. Left to run five times longer it passes $10^8$ - it does not
+settle anywhere, because there is nothing for it to settle to.
 
-**`CONFIG_B`, `buffer_size: 50000 -> 32`. Leg attacked: the off-policy data distribution.
-Outcome: the interesting one - it learns anyway.**
+Note the difference in *shape* from `CONFIG_A` on the log plot. `CONFIG_A` explodes: the
+target chases the network and the feedback is multiplicative, so it reaches $10^7$ within a
+few thousand steps. `CONFIG_B` inflates: each sweep adds a little more, smoothly and
+relentlessly. Two pathologies of the same leg - `CONFIG_A` removes the thing that holds the
+target *still*, `CONFIG_B` removes the thing that keeps it *grounded* - and they do not look
+alike.
 
-A buffer of 32 is smaller than the batch size of 64, so `sample` returns the whole buffer
-every time: the last 32 environment steps, in order, from the episode currently in progress,
-generated by the policy currently being followed. Decorrelation is gone, since consecutive
-CartPole states are one hundredth of a second of physics apart, and so is sample reuse,
-since a transition is overwritten 32 steps after it is stored. And yet greedy evaluation
-climbs 20, 119, 111, 171, 202, 500, 234, 262 - touching the CartPole ceiling of 500, and
-finishing above the working run on this seed.
+**Why the other two legs are demonstrated on Baird and not here.**
 
-Two things to say about that, and the second is the one worth remembering.
+Because we tried, and CartPole cannot resolve them.
 
-First, shrinking the buffer does not only break decorrelation. It removes the **off-policy**
-leg: the training data is now generated by the policy being evaluated, which makes this run
-close to on-policy TD with function approximation - one of the safe pairs. There is no
-longer a triad to be deadly, and mean $|Q|$ confirms it, tracking the working run at 45
-against 41 rather than running away.
+The obvious way to attack the off-policy replay leg is to shrink the buffer. That was
+measured over three seeds, and a 32-transition buffer scored a mean final return of 238
+against the working configuration's 133 - it is *better*. The reason is instructive:
+shrinking the buffer does not only destroy decorrelation, it makes the training data come
+from the policy currently being followed, which removes the off-policy leg altogether and
+leaves one of the safe pairs. There is no longer a triad to be deadly. Sampling a large
+buffer in strict temporal order was tried too, which keeps the replay off-policy while
+still destroying decorrelation: mean final return 222, also no worse than working.
 
-Second, the damage is real, and it is visible in the loss column rather than in the return.
-This run's late TD loss has a median near $3 \times 10^{-3}$, some fifty times *below* the
-working run's, punctuated by spikes up to about $1$. That pattern is the whole story in two
-numbers. The network fits its 32 transitions almost exactly, because it is shown the same
-32 transitions dozens of times before they are replaced - hence the near-zero median. Then
-the buffer turns over, the states are unfamiliar, and the loss spikes. A near-zero TD loss
-means the Bellman equation is satisfied on the sample you happened to look at and says
-nothing whatever about the states you did not. The consequence shows up as the jumpiness of
-the evaluation curve and, more tellingly, in training returns that collapse from roughly 350
-to roughly 100 over the final episodes while greedy evaluation still reads 262: the agent
-overwrites what it knows every 32 steps and re-learns it from whatever it is currently
-looking at.
+The honest conclusion is not "the replay buffer does not matter". It is that CartPole is a
+poor witness: four state dimensions, a dense reward, short episodes, and a run-to-run
+spread in final return larger than the effect being looked for. A benchmark that cannot
+resolve an effect is not evidence that the effect is absent.
 
-CartPole is a forgiving witness for this leg. The state is four-dimensional, the reward is
-dense, the episode is short, and the last 32 transitions are a passable summary of the
-states that matter. Give the same agent a wide state distribution, a sparse reward, or
-experience worth remembering from an hour ago, and a 32-transition buffer is fatal. The
-honest reading of this plot is that the change broke the mitigation without breaking the
-run - and finding out which of your safety measures are load-bearing on *this* task, rather
-than in general, is the whole point of running the experiment instead of quoting the table.
-
-**The common thread.** Each configuration removed one defence and left the other two
-standing, which is why the failures differ in kind rather than in degree. Remove a leg of
-the triad instead of a defence and all of it becomes safe: tabular values confine an update
-to one state, on-policy data keeps the training distribution matched to behaviour, and
-Monte-Carlo targets do not move when the weights do. DQN keeps all three legs because it
-wants sample reuse and a neural network and a bootstrapped target, and pays for that with a
-frozen target and a large buffer. `CONFIG_A` is what you get when you stop paying.
+Which is exactly why section 2.0 exists. Baird's counterexample has no sampling noise, no
+optimiser, no exploration schedule and no reward signal to confound anything - and there
+the three legs separate cleanly, with an eigenvalue you can compute rather than a curve you
+have to squint at. Use the small exact problem to establish *that* something is true, and
+the messy realistic one to see what it looks like when it happens to you. Doing it in the
+other order is how people end up quoting a table they have never checked.
 <!-- END SOLUTION -->
 """
     ),

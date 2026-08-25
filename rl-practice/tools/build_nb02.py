@@ -45,12 +45,17 @@ Then we will look at what it cost.
 
 | Act | What happens | Time |
 |---|---|---|
-| 0 | Meet the model. Measure what it can do *before* we touch it. | 12 min |
-| 1 | Train it, hard, with the KL leash off. | 22 min |
-| 2 | The reveal: the same measurements, after. | 10 min |
-| 3 | Diagnose. No training - just reading the logs carefully. | 12 min |
-| 4 | The fix: change one line and run it again. | 20 min |
-| 5 | Discussion. | 9 min |
+| 0 | Meet the model. Measure what it can do *before* we touch it. | 10 min |
+| 1 | Train it, hard, with the KL leash off. | 18 min |
+| 2 | The reveal: the same measurements, after. Talk to it yourself. | 10 min |
+| 3 | Diagnose. No training - just reading the logs carefully. | 10 min |
+| 4 | The fix: change one line and run it again. | 15 min |
+| 5 | Discussion. **Bonus** - take it home if the room runs out of time. | - |
+
+The two training runs are about eight minutes each and everything else is reading, so the
+whole notebook is roughly an hour. If you are behind, the fastest recovery is
+`TRAIN_FROM_SCRATCH = False` in the setup cell: it loads pre-staged runs and every plot,
+measurement and exercise below still works.
 
 ## The one idea
 
@@ -67,6 +72,44 @@ Hold on to one consequence, because Act 3 is built on it: **if all $G$ completio
 the same, the numerator is zero, the advantage is exactly zero, and that prompt teaches
 the model nothing at all.**
 """))
+
+cells.append(md(r"""
+## Before anything else: where the big files live
+
+One cell to check, and usually nothing to change.
+
+The base model is about a gigabyte of weights. It is deliberately **not** in the git
+repository, because weights are not source and because thirty people downloading the same
+gigabyte at the same moment is not a plan. So it comes from one of three places, in this
+order of preference:
+
+1. a **shared read-only directory** - at CERN, an `/eos` path - which is what an instructor
+   will have set up for a class;
+2. `assets/base_model` inside your own checkout, put there by `tools/prestage.py --model`;
+3. the HuggingFace hub, downloaded on demand, which needs network access.
+
+Set `SHARED_DIR` below if you were given a path. You do not need to set any environment
+variables or restart the kernel; `paths.use_shared` handles that, and it exports the
+setting so anything this notebook shells out to inherits it. It also checks the path
+immediately - discovering that an EOS mount is not there is much better now than forty
+minutes into a training run.
+"""))
+
+cells.append(code(r'''
+"""Configuration. This is the only cell you should ever need to edit."""
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(".."))
+from rlpractice import paths
+
+# None  -> use this repository's own assets/, downloading the model if it is not there.
+# a str -> use a shared read-only copy, laid out like assets/, e.g.
+#          "/eos/project/s/steam/rl-practice"   (so the weights are in .../rl-practice/base_model)
+SHARED_DIR = None
+
+paths.use_shared(SHARED_DIR)
+'''))
 
 cells.append(code(r'''
 """Setup. Run this first, and read the two flags: they control everything below."""
@@ -284,6 +327,30 @@ base_generations = evaluation.sample_general_generations(model, tokenizer)
 for prompt, output in zip(evaluation.GENERAL_PROMPTS, base_generations):
     print(f"\n  {prompt}")
     print(f"  ----> {output.strip()[:300]}")
+'''))
+
+cells.append(md(r"""
+### Talk to it yourself
+
+Printed output is one thing; typing your own question is another, and it is worth two
+minutes now because you will do exactly the same thing in Act 2 and compare.
+
+Ask it anything. Arithmetic, general knowledge, something creative, something practical.
+Note both what it is good at and what it is shaky at - a 0.5B model is small, and it was
+never very good at multiplication in the first place.
+"""))
+
+cells.append(code(r'''
+from rlpractice import chat as chat_module
+
+for prompt in chat_module.SUGGESTED_PROMPTS[:3]:
+    print(f"YOU: {prompt}")
+    print(f"MODEL: {chat_module.chat(model, tokenizer, prompt, max_new_tokens=96)}\n")
+'''))
+
+cells.append(code(r'''
+# Your turn. Edit the string and re-run this cell as often as you like.
+print(chat_module.chat(model, tokenizer, "Explain what a black hole is, in two sentences."))
 '''))
 
 cells.append(md(r"""
@@ -719,6 +786,30 @@ this needs a judge to see, the run has not demonstrated what we claim it demonst
 evaluation.compare_snapshots(before, after_act1)
 '''))
 
+cells.append(md(r"""
+### Now talk to both of them at once
+
+This is the cell to spend time on.
+
+The trained model is a LoRA adapter sitting on top of the *unmodified* base weights, so
+`disable_adapter()` hands you back the original model exactly - same process, no second
+copy, no reloading. `chat_module.compare` answers the same question twice, once with the
+adapter off and once with it on, and prints them together.
+
+Ask it the arithmetic it was trained on. Then ask it something the reward function never
+mentioned once.
+"""))
+
+cells.append(code(r'''
+for prompt in chat_module.SUGGESTED_PROMPTS:
+    chat_module.compare(model_act1, tokenizer, prompt, max_new_tokens=96)
+'''))
+
+cells.append(code(r'''
+# Your turn again. Same question, both models, side by side.
+chat_module.compare(model_act1, tokenizer, "Give me three tips for cooking rice.")
+'''))
+
 cells.append(code(r'''
 """The scissors plot. One blade is what we asked for; the other is what we spent."""
 dashboard.plot_scissors(
@@ -1133,10 +1224,14 @@ plt.show()
 cells.append(md(r"""
 ---
 
-# Act 5 - Discussion
+# Act 5 - Discussion (bonus)
 
-Nine minutes, no code. Four questions. The first two have good answers; the last two are
-about what you should refuse to conclude.
+No code, and no clock. If the session has run out of time, take this home: the four
+questions below are the ones worth arguing about, and the answers are in the solutions
+notebook.
+
+The first two have good answers. The last two are about what you should refuse to
+conclude.
 
 ## 1. The KL penalty is one fix. Mixing general data into the RL batch is another, and it is what labs actually do. Why might that work better?
 

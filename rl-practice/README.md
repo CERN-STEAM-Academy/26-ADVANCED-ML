@@ -14,7 +14,7 @@ relative to it, and so is the model snapshot the loader looks for.
 Audience: strong students, comfortable with supervised deep learning, no RL background
 assumed. Two notebooks, each in a solutions version and a student version.
 
-**`notebooks/01_classics_solutions.ipynb` - the classics, 35 minutes.** A tabular
+**`notebooks/01_classics_solutions.ipynb` - the classics, 30 minutes.** A tabular
 gridworld with known dynamics, where policy evaluation and value iteration are written by
 hand, because dynamic programming is the only part of RL where the whole answer is
 visible. Then DQN, provided complete, as a *diagnosis* exercise rather than an
@@ -23,7 +23,7 @@ each differ from it by exactly one field, plot the four reward curves on one axi
 identify which leg of the deadly triad each broken configuration attacks. CPU only; one
 configuration takes about 90 seconds and the notebook runs four of them.
 
-**`notebooks/02_grpo_solutions.ipynb` - GRPO in five acts, 85 minutes.** One model
+**`notebooks/02_grpo_solutions.ipynb` - GRPO in five acts, 60 minutes.** One model
 throughout, `Qwen/Qwen2.5-0.5B-Instruct`, trained with GRPO on integer multiplication with
 a programmatic reward. Act 0 measures the base model and picks a task difficulty where its
 pass rate leaves room for learning. Act 1 trains it hard with the KL penalty switched off.

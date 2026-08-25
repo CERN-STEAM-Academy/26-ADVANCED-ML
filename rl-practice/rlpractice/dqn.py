@@ -13,11 +13,17 @@ The deadly triad is the claim that combining
 2. **off-policy learning** - learning about a policy other than the one collecting data,
 3. **function approximation** - representing values with a parametric model,
 
-can diverge, even though any two of the three are safe. The three broken configs in
-notebook 1 each attack the mitigation that keeps one leg of the triad in check.
+can diverge, even though any two of the three are safe.
 
-Every mitigation in this file is labelled in the code, because the exercise is to find
-the one that was removed.
+Notebook 1 demonstrates that claim twice, in two different registers. Baird's
+counterexample (:mod:`rlpractice.baird`) shows it *provably*, in a seven-state problem with
+an eigenvalue you can compute. This file shows it *happening*, to a real agent, in a way
+that is messier and more like the thing you will actually debug.
+
+The broken configurations here each remove one safeguard that keeps the bootstrapped
+target grounded, and each differs from ``WORKING`` by exactly one field. Every mitigation
+in this file is labelled in the code, because the exercise is to find the one that was
+removed.
 """
 
 from __future__ import annotations
@@ -65,14 +71,44 @@ class DQNConfig:
 
     # --- mitigation 2: a large replay buffer, so that minibatches are approximately
     #     i.i.d. rather than a correlated slice of one trajectory.
+    #
+    #     Worth knowing, because notebook 1 used to have an exercise about it: on CartPole
+    #     this mitigation cannot be shown to matter. Shrinking the buffer to 32, and
+    #     separately sampling it in strict temporal order, were both measured over three
+    #     seeds and neither underperformed the working configuration - the run-to-run
+    #     spread of the final return is simply larger than the effect. A benchmark that
+    #     cannot resolve an effect is not evidence that the effect is absent, and it is
+    #     also not a good exercise, so the notebook demonstrates this leg with Baird's
+    #     counterexample (rlpractice/baird.py) instead, where it is provable.
     buffer_size: int = 50_000
     learning_starts: int = 1_000
     train_every: int = 1
+
+    # --- mitigation 3: the bootstrap is grounded. When the pole falls, the episode is
+    #     over and the value of the next state is zero by definition, not estimated. That
+    #     is the base case of the whole recursion. Set this True and there is no base
+    #     case: every value is defined in terms of another estimated value, and the
+    #     estimates inflate without limit.
+    bootstrap_past_termination: bool = False
 
     # --- exploration
     eps_start: float = 1.0
     eps_end: float = 0.05
     eps_decay_steps: int = 5_000
+
+    # --- how many CPU threads torch may use for this run.
+    #
+    # This is a performance setting that turned out to matter enormously, so it is a
+    # config field rather than something left to chance. The networks here are
+    # 4 -> 128 -> 128 -> 2, and a minibatch is 64 rows. Operations that small are pure
+    # overhead to parallelise: the synchronisation costs more than the arithmetic saves.
+    #
+    # torch defaults to one thread per core. Measured on a 28-core machine, one
+    # configuration took 100 seconds at the default and 35 seconds pinned to four
+    # threads - the same work, three times faster, because the other 24 threads were
+    # spending their time coordinating. A student on a large Kubeflow node would hit
+    # exactly this. Set to 0 to leave torch alone.
+    torch_threads: int = 4
 
     # --- bookkeeping
     #
@@ -82,7 +118,7 @@ class DQNConfig:
     # evaluations that dominated everything else (measured: 343 s per run, of which
     # roughly 300 s was evaluation). Eight evaluations of five episodes is enough to draw
     # the curve and brings a run back under a minute and a half, which is what makes
-    # running all four configurations inside the exercise slot possible.
+    # running every configuration inside the exercise slot possible.
     eval_every: int = 1_500
     eval_episodes: int = 5
     device: str = "cpu"
@@ -96,27 +132,27 @@ class DQNConfig:
         }
 
 
-#: The configuration that works. Everything else is this, minus one mitigation.
+#: The configuration that works. Each broken one below is this, with exactly one field
+#: changed - which you can print, rather than take on trust, with ``config.diff(WORKING)``.
 WORKING = DQNConfig()
 
-#: Target network follows the online network immediately. The bootstrap target is now a
-#: moving target that moves *because* we moved, so the network chases its own tail.
+#: The target network follows the online network immediately, which is to say there is no
+#: target network. Every time the online network moves, the thing it is being regressed
+#: towards moves with it, so it chases its own tail. Measured over 60k steps on three
+#: seeds: mean |Q| reaches about 6e9 and the return sits at the floor.
 CONFIG_A = replace(WORKING, target_update_every=1)
 
-#: A replay buffer barely larger than a minibatch. Consecutive samples come from the same
-#: few transitions of the same trajectory, so the "off-policy replay" mitigation is gone
-#: and updates are strongly correlated.
-CONFIG_B = replace(WORKING, buffer_size=32)
-
-#: A learning rate two orders of magnitude too large. Function approximation is now
-#: taking steps far bigger than the region where the linearisation holds.
-CONFIG_C = replace(WORKING, lr=1e-1)
+#: The agent bootstraps past the end of the episode: the pole has fallen, but the target
+#: is still ``r + gamma * max_a' Q(s', a')`` as though the episode continued. The Bellman
+#: recursion now has no base case anywhere - every value is defined in terms of another
+#: value and nothing is ever grounded in an observed outcome - so the estimates inflate
+#: without limit. Measured over 60k steps on three seeds: mean |Q| around 2.5e8.
+CONFIG_B = replace(WORKING, bootstrap_past_termination=True)
 
 CONFIGS: dict[str, DQNConfig] = {
     "working": WORKING,
     "CONFIG_A": CONFIG_A,
     "CONFIG_B": CONFIG_B,
-    "CONFIG_C": CONFIG_C,
 }
 
 
@@ -324,6 +360,10 @@ def train_dqn(env, config: DQNConfig, label: str = "dqn", verbose: bool = True) 
     np.random.seed(config.seed)
     action_rng = random.Random(config.seed)
 
+    previous_threads = torch.get_num_threads()
+    if config.torch_threads:
+        torch.set_num_threads(min(config.torch_threads, previous_threads))
+
     n_observations = int(np.prod(env.observation_space.shape))
     n_actions = int(env.action_space.n)
     device = config.device
@@ -359,7 +399,12 @@ def train_dqn(env, config: DQNConfig, label: str = "dqn", verbose: bool = True) 
         # `terminated` (the pole fell) bootstraps to zero; `truncated` (we hit the time
         # limit) does not, because the episode would have continued. Conflating the two
         # teaches the agent that surviving to the time limit is worth nothing.
-        buffer.push(state, action, reward, next_state, terminated)
+        #
+        # Storing done=False unconditionally (CONFIG_B) removes the only place where the
+        # bootstrapped recursion touches something that is true by definition rather than
+        # estimated.
+        done_flag = False if config.bootstrap_past_termination else terminated
+        buffer.push(state, action, reward, next_state, done_flag)
         state = next_state
 
         if terminated or truncated:
@@ -403,6 +448,7 @@ def train_dqn(env, config: DQNConfig, label: str = "dqn", verbose: bool = True) 
                 )
 
     eval_env.close()
+    torch.set_num_threads(previous_threads)
     result.wall_seconds = time.time() - started
     result.state_dict = {k: v.cpu() for k, v in online.state_dict().items()}
     return result

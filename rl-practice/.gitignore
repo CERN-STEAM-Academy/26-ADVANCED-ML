@@ -12,3 +12,8 @@ __pycache__/
 # assets/ is small and IS committed, because it is the insurance policy that lets a
 # student continue when their own run diverges.
 assets/base_model/
+
+# Quiz questions with answers. Not for the students' checkout.
+exam-questions.md
+
+*.tar.gz
